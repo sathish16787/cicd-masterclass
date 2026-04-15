@@ -1,36 +1,67 @@
 name: CI Pipeline
 
-# Trigger: runs on every push to main branch
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: cicd-masterclass
+
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest         # GitHub spins up a fresh Linux VM
+  build-test-push:
+    runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout your code
+      # Step 1: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Build the Docker image
+      # Step 2: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Step 3: Login to ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Step 4: Build Docker image
       - name: Build Docker image
-        run: docker build -t cicd-app:${{ github.sha }} .
-
-      # Step 3: Run the container and test it
-      - name: Run container
         run: |
-          docker run -d -p 5000:5000 --name test-app cicd-app:${{ github.sha }}
-          sleep 3  # wait for app to start
+          docker build -t $ECR_REPOSITORY:${{ github.sha }} .
 
-      # Step 4: Hit the health endpoint
+      # Step 5: Run and test container
       - name: Test health endpoint
         run: |
+          docker run -d -p 5000:5000 --name test-app $ECR_REPOSITORY:${{ github.sha }}
+          sleep 3
           curl --fail http://localhost:5000/health
+          docker stop test-app
 
-      # Step 5: Cleanup
-      - name: Stop container
-        run: docker stop test-app
+      # Step 6: Push to ECR
+      - name: Push to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker tag $ECR_REPOSITORY:${{ github.sha }} \
+            $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          
+          docker tag $ECR_REPOSITORY:${{ github.sha }} \
+            $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # Step 7: Print image URI for next steps
+      - name: Print image URI
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
