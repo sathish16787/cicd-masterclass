@@ -1,0 +1,36 @@
+name: CI Pipeline
+
+# Trigger: runs on every push to main branch
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest         # GitHub spins up a fresh Linux VM
+
+    steps:
+      # Step 1: Checkout your code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Build the Docker image
+      - name: Build Docker image
+        run: docker build -t cicd-app:${{ github.sha }} .
+
+      # Step 3: Run the container and test it
+      - name: Run container
+        run: |
+          docker run -d -p 5000:5000 --name test-app cicd-app:${{ github.sha }}
+          sleep 3  # wait for app to start
+
+      # Step 4: Hit the health endpoint
+      - name: Test health endpoint
+        run: |
+          curl --fail http://localhost:5000/health
+
+      # Step 5: Cleanup
+      - name: Stop container
+        run: docker stop test-app
